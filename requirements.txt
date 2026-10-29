@@ -1,3 +1,5 @@
 feedparser
 pyyaml
 requests
+trafilatura
+googlenewsdecoder

@@ -29,30 +29,55 @@ def tr(text):
 
 GROQ_KEY = os.getenv("GROQ_API_KEY", "")
 GROQ_MODELS = [m for m in os.getenv("GROQ_MODELS", "openai/gpt-oss-120b,qwen/qwen3.8-27b").split(",") if m]
-SYS_PROMPT = """You are the senior editor of a professional Persian-language Telegram news channel (style: BBC Persian / Iran International). Rewrite the English news item below into fluent, natural, journalistic Persian. Use ONLY facts present in the input; never add details, dates, casualties, causes, context or opinion that are not in the input. Keep all numbers and names exact; transliterate foreign names in standard Persian press spelling (e.g. منچستر یونایتد، کریستین لاگارد، ولادیمیر پوتین). Use correct Persian orthography with zero-width non-joiners (می‌شود، دست‌کم).
+SYS_PROMPT = """You are the senior editor of a professional Persian-language Telegram news channel (style: BBC Persian / Iran International). You get an English news item: title, feed summary and (when available) the article text. Write a Persian news post that tells readers the actual substance, not a teaser.
+RULES:
+- Use ONLY facts present in the input. Never invent details, dates, numbers, causes or quotes. No opinion.
+- headline: states the actual news/outcome (e.g. the poll result, the decision, the casualty count, the fee), max ~14 words, journalistic, not a literal title translation and not a question/teaser.
+- body: if an article is given, 3-5 fluent Persian sentences delivering the core news: the outcome/result, key numbers, the main quotes attributed to who said them («...»), and brief context only if it is in the article. If NO article is given, write only 1-2 sentences restating exactly what the title/summary say; do NOT add locations, victims, officials, roles, first names, motives or 'part of escalation' context that is not written there.
+- Do not expand names: if the input says 'Vance', write ونس (or جی‌دی ونس for JD Vance), never guess a different first name or job title.
+- Keep numbers and names exact. Transliterate names in standard Persian press spelling (منچستر یونایتد، کریستین لاگارد، ولادیمیر پوتین).
+- Never use Arabic diacritics (اعراب like ِ ْ َ) and never leave Latin letters inside Persian words. Club names: Everton = اورتون، Arsenal = آرسنال، Chelsea = چلسی، Tottenham = تاتنهام، Bayern = بایرن مونیخ.
+- Correct terms: admiral = دریاسالار؛ Council on Foreign Relations = شورای روابط خارجی؛ taxpayers = مالیات‌دهندگان؛ Federal Reserve = فدرال رزرو؛ ECB = بانک مرکزی اروپا؛ IRGC = سپاه پاسداران.
+- Grammar: use singular verbs for a single person (نتانیاهو برود، نه بروند). Correct Persian orthography with zero-width non-joiners (می‌شود، دست‌کم).
+- Never write phrases like «مقالهٔ X نشان می‌دهد» or «به گزارش X» about the source inside the body; just state the news.
 Return ONLY a JSON object:
-{"headline": "short punchy Persian headline, max ~14 words, journalistic, not a literal translation",
- "body": "1-2 fluent Persian sentences with the key facts from the input",
- "urgent": true only for genuinely major breaking news (a military attack on Iran, major war escalation, a major central bank rate decision by the Fed/ECB, death of a head of state, etc.), otherwise false,
- "source_fa": "Persian name of the source if well known (رویترز، بی‌بی‌سی، الجزیره، گاردین، ایران اینترنشنال، اسکای اسپورتس، ...), otherwise the original name"}"""
+{"headline": "...", "body": "...",
+ "urgent": true only for genuinely major breaking news (a military attack on Iran, major war escalation, a Fed/ECB rate change, death of a head of state, etc.), otherwise false,
+ "source_fa": "Persian name of the source if well known (رویترز، بی‌بی‌سی، الجزیره، گاردین، ایران اینترنشنال، اسکای اسپورتس، وال‌استریت ژورنال، ...), otherwise the original name unchanged"}"""
 
 def fa(s): return bool(re.search(r"[\u0600-\u06FF]", s or ""))
 
-def llm_rewrite(title, summary, source, category):
+_tok = {"remaining": 8000, "reset_at": 0.0}
+
+def _parse_reset(v):
+    m = re.match(r"(?:(\d+)m)?([\d.]+)s", v or "")
+    return (int(m.group(1) or 0) * 60 + float(m.group(2))) if m else 5.0
+
+def _pace(need):
+    if _tok["remaining"] < need and time.time() < _tok["reset_at"]:
+        w = min(_tok["reset_at"] - time.time() + 1, 65); print(f"pacing {w:.0f}s for token budget"); time.sleep(w)
+
+def llm_rewrite(title, summary, source, category, article=""):
     if not GROQ_KEY: return None
-    user = json.dumps({"category": category, "source": source, "title": title, "summary": summary}, ensure_ascii=False)
+    user = json.dumps({"article_available": bool(article), "category": category, "source": source, "title": title, "summary": summary, "article": article}, ensure_ascii=False)
+    need = len(SYS_PROMPT + user) // 3 + 900
     for model in GROQ_MODELS:
         for attempt in range(3):
-            body = {"model": model, "temperature": 0.2, "response_format": {"type": "json_object"},
+            body = {"model": model, "temperature": 0.1, "response_format": {"type": "json_object"},
                     "messages": [{"role": "system", "content": SYS_PROMPT}, {"role": "user", "content": user}]}
             if "gpt-oss" in model: body["reasoning_effort"] = "low"
+            _pace(need)
             try:
                 r = requests.post("https://api.groq.com/openai/v1/chat/completions", json=body, timeout=60,
                                   headers={"Authorization": "Bearer " + GROQ_KEY})
             except Exception as ex:
                 print("groq error", model, type(ex).__name__); break
+            try:
+                _tok["remaining"] = int(r.headers.get("x-ratelimit-remaining-tokens", 8000))
+                _tok["reset_at"] = time.time() + _parse_reset(r.headers.get("x-ratelimit-reset-tokens"))
+            except Exception: pass
             if r.status_code == 429:
-                wait = min(float(r.headers.get("retry-after", 5) or 5), 20)
+                wait = min(float(r.headers.get("retry-after", 10) or 10) + 1, 65)
                 print(f"groq 429 {model}, wait {wait}s"); time.sleep(wait); continue
             if not r.ok:
                 print("groq http", model, r.status_code, r.text[:150]); break
@@ -60,7 +85,8 @@ def llm_rewrite(title, summary, source, category):
                 txt = r.json()["choices"][0]["message"]["content"]
                 m = re.search(r"\{.*\}", txt, re.S)
                 d = json.loads(m.group(0) if m else txt)
-                h, b = str(d.get("headline", "")).strip(), str(d.get("body", "")).strip()
+                strip = lambda x: re.sub(r"[\u064B-\u0652]", "", str(x or "")).strip()
+                h, b = strip(d.get("headline")), strip(d.get("body"))
                 if fa(h):
                     return {"headline": h, "body": b if fa(b) else "", "urgent": d.get("urgent") in (True, "true", "True"),
                             "source_fa": str(d.get("source_fa") or source).strip(), "model": model}
@@ -69,6 +95,34 @@ def llm_rewrite(title, summary, source, category):
                 print("groq parse fail", model, type(ex).__name__)
             break
     return None
+
+UA = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36"}
+ARTICLE_WORDS = int(os.getenv("ARTICLE_WORDS", "1100"))
+
+def resolve(url):
+    if "news.google.com" not in url: return url
+    try:
+        from googlenewsdecoder import gnewsdecoder
+        d = gnewsdecoder(url, interval=1)
+        if d.get("status") or d.get("success"): return d.get("decoded_url") or url
+    except Exception as ex:
+        print("gnews decode fail", type(ex).__name__)
+    return url
+
+def fetch_article(url):
+    """Return (real_url, text) - text empty if blocked/paywalled/short."""
+    real = resolve(url)
+    if "news.google.com" in real: return url, ""
+    try:
+        import trafilatura
+        r = requests.get(real, headers=UA, timeout=15)
+        if r.status_code != 200: print("article http", r.status_code, real[:60]); return real, ""
+        t = trafilatura.extract(r.text, include_comments=False, include_tables=False) or ""
+    except Exception as ex:
+        print("article fail", type(ex).__name__, real[:60]); return real, ""
+    w = t.split()
+    if len(w) < 80: return real, ""
+    return real, " ".join(w[:ARTICLE_WORDS])
 
 def clean(s):
     s = re.sub(r"<[^>]+>", " ", s or ""); s = html.unescape(s)
@@ -131,7 +185,7 @@ def main():
             seen.append(i); seenset.add(i)  # mark everything we looked at
             if now - ts > max_age: continue
             cat = classify(e.get("title", "") + " " + clean(e.get("summary", "")), f, cats)
-            if not cat: continue
+            if not cat or (os.getenv("ONLY_CAT") and cat not in os.getenv("ONLY_CAT").split(",")): continue
             batch.add(tk); new.append((cats[cat].get("priority", 9), -ts, i, tk, cat, f, e))
     new.sort(key=lambda x: (x[0], x[1]))  # priority first, then newest
     to_post = new[:FIRST if first else MAX_POSTS]
@@ -145,7 +199,9 @@ def main():
             raw_s = ""  # Google News summary only repeats the title
         if raw_s.lower().startswith(raw_t.lower()[:40]): raw_s = raw_s[len(raw_t):].strip()
         rule = cats[cat]; label = rule.get("label", "خبر").replace("_", " ")
-        res = llm_rewrite(raw_t, raw_s, src, label)
+        link, article = fetch_article(e.get("link", ""))
+        print(f"article: {len(article.split())} words from {link[:70]}")
+        res = llm_rewrite(raw_t, raw_s, src, label, article)
         if res:
             title, summ, urgent, src_fa = res["headline"], res["body"], res["urgent"], res["source_fa"]
             print("llm:", res["model"])
@@ -157,12 +213,15 @@ def main():
             print("skip untranslated:", raw_t[:60])
             if i in seen: seen.remove(i)
             continue
+        print("posting:", raw_t[:90])
         head = f"🔴 فوری | {label}" if urgent else f"{rule.get('emoji','📰')} {label}"
         msg = f"{head}\n\n<b>{html.escape(title, quote=False)}</b>\n"
+        summ = summ[:2500]
         if summ: msg += f"\n{html.escape(summ, quote=False)}\n"
-        msg += f"\n🔗 <a href=\"{html.escape(e.get('link',''), quote=True)}\">منبع: {html.escape(src_fa, quote=False)}</a>"
+        msg += f"\n🔗 <a href=\"{html.escape(link, quote=True)}\">منبع: {html.escape(src_fa, quote=False)}</a>"
         if sig: msg += f"\n🆔 {html.escape(sig, quote=False)}"
         if cfg.get("hashtags", True): msg += f"\n\n#{label.replace(' ', '_')}"
+        if len(msg) > 4000: msg = msg[:3990] + "…"
         if send(msg, preview): seen.append(tk)
         time.sleep(0 if DRY else 3)
     if not DRY:

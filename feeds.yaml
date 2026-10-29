@@ -1,5 +1,5 @@
 # ===== تنظیمات ربات =====
-max_posts_per_run: 8      # حداکثر خبر در هر اجرا
+max_posts_per_run: 6      # حداکثر خبر در هر اجرا
 first_run_posts: 4        # در اولین اجرا فقط این تعداد
 max_age_hours: 6
 channel_signature: "@khabarfurybot"   # امضای پایین هر پیام (خالی = بدون امضا)
