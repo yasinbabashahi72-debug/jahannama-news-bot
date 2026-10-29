@@ -98,7 +98,13 @@ def main():
                 raw_t, _, src = raw_t.rpartition(" - ")
             raw_s = ""  # Google News summary only repeats the title
         if raw_s.lower().startswith(raw_t.lower()[:40]): raw_s = raw_s[len(raw_t):].strip()
-        title = tr(raw_t); summ = tr(raw_s) if len(raw_s) > 25 else ""
+        title = tr(raw_t)
+        if not re.search(r"[\u0600-\u06FF]", title):  # not translated -> don't post English, retry next run
+            print("skip untranslated:", raw_t[:60])
+            if i in seen: seen.remove(i)
+            continue
+        summ = tr(raw_s) if len(raw_s) > 25 else ""
+        if summ and not re.search(r"[\u0600-\u06FF]", summ): summ = ""
         rule = cats[cat]
         msg = f"{rule.get('emoji','📰')} #{rule.get('label','خبر').replace(' ','_')}\n\n<b>{html.escape(title, quote=False)}</b>\n"
         if summ: msg += f"\n{html.escape(summ, quote=False)}\n"
@@ -108,6 +114,6 @@ def main():
     if not DRY:
         os.makedirs("state", exist_ok=True)
         json.dump({"seen": seen[-CAP:]}, open(STATE, "w"))
-    print(f"done: posted {len(to_post)}")
+    print("done")
 
 if __name__ == "__main__": main()
