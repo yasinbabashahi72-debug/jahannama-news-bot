@@ -1,0 +1,65 @@
+# ===== تنظیمات ربات =====
+max_posts_per_run: 8      # حداکثر خبر در هر اجرا
+first_run_posts: 4        # در اولین اجرا فقط این تعداد
+max_age_hours: 6          # خبرهای قدیمی‌تر از این گذاشته نمی‌شوند
+
+# دسته‌ها به ترتیب اولویت (عدد کمتر = مهم‌تر)
+# include: حداقل یکی از این کلمات باید در عنوان/خلاصه باشد (برای فیدهای filter: true)
+# exclude: اگر یکی از این کلمات بود، خبر رد می‌شود
+categories:
+  iran:
+    priority: 1
+    emoji: "🇮🇷"
+    label: "ایران"
+    include: [iran, iranian, tehran, khamenei, pezeshkian, araghchi, irgc, revolutionary guard, hormuz, persian gulf, isfahan, natanz, fordow]
+    exclude: [iran's football, iranian league]
+  war:
+    priority: 2
+    emoji: "⚔️"
+    label: "جنگ و نظامی"
+    include: [airstrike, air strike, airstrikes, strike, strikes, attack, attacks, attacked, killed, kills, dead, missile, missiles, drone strike, drones, offensive, ceasefire, truce, invasion, invade, shelling, frontline, front line, clashes, troops advance, fighting, bombing, bombed, war crimes, casualties, rebels, militants, insurgents, hostages, escalation, retaliation, intercepted, ground operation, siege]
+    exclude: [collision, crash, accident, derailed, election, majority, parties, hate, cyberattack, heart attack, panic attack, contract, contracts, healthcare, health care, veterans, veteran, job fair, fair, procurement, budget, recruiting, recruitment, ceremony, ceremonies, awarded, award, hiring, employee, lawsuit, sues, leaked, classified, fired, museum, anniversary, football, soccer, cricket, tennis, nba, nfl, film, movie, review, recipe, stocks, shares]
+  forex:
+    priority: 3
+    emoji: "💹"
+    label: "فارکس و بازار"
+    include: [forex, fx, dollar, euro, yen, pound, sterling, yuan, currency, currencies, fed, federal reserve, ecb, boj, boe, central bank, rate cut, rate hike, interest rate, inflation, cpi, jobs report, payrolls, gold, oil, brent, wti, crude, opec, treasury, yields, bitcoin, eur/usd, gbp/usd, usd/jpy, xau]
+    exclude: [stock slides, ipo, earnings call, spacex]
+  transfer:
+    priority: 4
+    emoji: "⚽️"
+    label: "نقل_و_انتقالات"
+    # برای فوتبال باید هم یک کلمهٔ نقل‌وانتقال باشد و هم اسم یک باشگاه یا بازیکن بزرگ
+    include: [transfer, transfers, signs, signing, signed, joins, joined, join, deal, fee, loan, bid, agree, agreed, agreement, move, contract, here we go, medical, swoop, release clause, talks to sign, target, sell, sale, buy, approach, offer, permanent]
+    require_also: [real madrid, barcelona, barca, man city, manchester city, man utd, man united, manchester united, liverpool, arsenal, chelsea, bayern, psg, paris saint-germain, juventus, inter milan, inter, ac milan, milan, atletico, tottenham, spurs, newcastle, dortmund, al nassr, al-nassr, al hilal, al-hilal, al ittihad, napoli, aston villa, leverkusen,
+                   mbappe, haaland, vinicius, bellingham, salah, yamal, kane, rodrygo, osimhen, wirtz, musiala, saka, rice, palmer, isak, gyokeres, alvarez, lautaro, ronaldo, messi, neymar, de bruyne, fernandes, rashford, nunez, kvaratskhelia, guehi, semenyo]
+    exclude: [women, "womens", wsl, u21, u23, academy, press conference, interview, manager, coach, boss, video, watch, highlights, "player ratings", preview, report, live, score, podcast, injury update, sacked, tactics, move forward, captain, captaincy]
+
+# فیدها. categories: دسته‌هایی که این فید می‌تواند داشته باشد (به ترتیب بررسی)
+# filter: true یعنی فقط خبرهایی که با کلمات دسته جور هستند گذاشته شوند
+feeds:
+  # --- ایران ---
+  - {name: "Iran International", url: "https://www.iranintl.com/en/feed", categories: [iran], filter: false}
+  - {name: "Guardian Iran", url: "https://www.theguardian.com/world/iran/rss", categories: [iran], filter: false}
+  - {name: "Google News: Iran", url: "https://news.google.com/rss/search?q=Iran+when:1d&hl=en-US&gl=US&ceid=US:en", categories: [iran], filter: false}
+  # --- جنگ و سیاست منطقه ---
+  - {name: "Al Jazeera", url: "https://www.aljazeera.com/xml/rss/all.xml", categories: [iran, war], filter: true}
+  - {name: "BBC Middle East", url: "https://feeds.bbci.co.uk/news/world/middle_east/rss.xml", categories: [iran, war], filter: true}
+  - {name: "BBC World", url: "https://feeds.bbci.co.uk/news/world/rss.xml", categories: [iran, war], filter: true}
+  - {name: "Guardian Ukraine", url: "https://www.theguardian.com/world/ukraine/rss", categories: [iran, war], filter: true}
+  - {name: "Defense News", url: "https://www.defensenews.com/arc/outboundfeeds/rss/", categories: [iran, war], filter: true}
+  - {name: "Google News: War", url: "https://news.google.com/rss/search?q=war+OR+military+OR+airstrike+when:1d&hl=en-US&gl=US&ceid=US:en", categories: [iran, war], filter: true}
+  # --- فارکس ---
+  - {name: "Investing.com Forex", url: "https://www.investing.com/rss/news_1.rss", categories: [forex], filter: true}
+  - {name: "Investing.com Commodities", url: "https://www.investing.com/rss/news_11.rss", categories: [forex], filter: true}
+  - {name: "Investing.com Economy", url: "https://www.investing.com/rss/news_95.rss", categories: [forex], filter: true}
+  - {name: "FXEmpire", url: "https://www.fxempire.com/api/v1/en/articles/rss/news", categories: [forex], filter: true}
+  - {name: "CNBC Markets", url: "https://www.cnbc.com/id/10000664/device/rss/rss.html", categories: [forex], filter: true}
+  - {name: "Google News: FX & Fed", url: "https://news.google.com/rss/search?q=forex+OR+%22dollar%22+OR+%22federal+reserve%22+OR+ECB+when:1d&hl=en-US&gl=US&ceid=US:en", categories: [forex], filter: true}
+  - {name: "Google News: Gold & Oil", url: "https://news.google.com/rss/search?q=gold+price+OR+oil+price+when:1d&hl=en-US&gl=US&ceid=US:en", categories: [forex], filter: true}
+  # --- نقل و انتقالات فوتبال (همیشه فیلتر می‌شود) ---
+  - {name: "BBC Gossip", url: "https://feeds.bbci.co.uk/sport/football/gossip/rss.xml", categories: [transfer], filter: true}
+  - {name: "Sky Sports Transfers", url: "https://www.skysports.com/rss/11095", categories: [transfer], filter: true}
+  - {name: "Guardian Transfer Window", url: "https://www.theguardian.com/football/transfer-window/rss", categories: [transfer], filter: true}
+  - {name: "ESPN FC", url: "https://www.espn.com/espn/rss/soccer/news", categories: [transfer], filter: true}
+  - {name: "Google News: Transfers", url: "https://news.google.com/rss/search?q=football+transfer+signs+when:1d&hl=en-US&gl=US&ceid=US:en", categories: [transfer], filter: true}
