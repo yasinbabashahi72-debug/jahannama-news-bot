@@ -27,6 +27,49 @@ def tr(text):
         print("mymemory fail:", str(e)[:80])
     return text  # 3) fallback: original text
 
+GROQ_KEY = os.getenv("GROQ_API_KEY", "")
+GROQ_MODELS = [m for m in os.getenv("GROQ_MODELS", "openai/gpt-oss-120b,qwen/qwen3.8-27b").split(",") if m]
+SYS_PROMPT = """You are the senior editor of a professional Persian-language Telegram news channel (style: BBC Persian / Iran International). Rewrite the English news item below into fluent, natural, journalistic Persian. Use ONLY facts present in the input; never add details, dates, casualties, causes, context or opinion that are not in the input. Keep all numbers and names exact; transliterate foreign names in standard Persian press spelling (e.g. منچستر یونایتد، کریستین لاگارد، ولادیمیر پوتین). Use correct Persian orthography with zero-width non-joiners (می‌شود، دست‌کم).
+Return ONLY a JSON object:
+{"headline": "short punchy Persian headline, max ~14 words, journalistic, not a literal translation",
+ "body": "1-2 fluent Persian sentences with the key facts from the input",
+ "urgent": true only for genuinely major breaking news (a military attack on Iran, major war escalation, a major central bank rate decision by the Fed/ECB, death of a head of state, etc.), otherwise false,
+ "source_fa": "Persian name of the source if well known (رویترز، بی‌بی‌سی، الجزیره، گاردین، ایران اینترنشنال، اسکای اسپورتس، ...), otherwise the original name"}"""
+
+def fa(s): return bool(re.search(r"[\u0600-\u06FF]", s or ""))
+
+def llm_rewrite(title, summary, source, category):
+    if not GROQ_KEY: return None
+    user = json.dumps({"category": category, "source": source, "title": title, "summary": summary}, ensure_ascii=False)
+    for model in GROQ_MODELS:
+        for attempt in range(3):
+            body = {"model": model, "temperature": 0.2, "response_format": {"type": "json_object"},
+                    "messages": [{"role": "system", "content": SYS_PROMPT}, {"role": "user", "content": user}]}
+            if "gpt-oss" in model: body["reasoning_effort"] = "low"
+            try:
+                r = requests.post("https://api.groq.com/openai/v1/chat/completions", json=body, timeout=60,
+                                  headers={"Authorization": "Bearer " + GROQ_KEY})
+            except Exception as ex:
+                print("groq error", model, type(ex).__name__); break
+            if r.status_code == 429:
+                wait = min(float(r.headers.get("retry-after", 5) or 5), 20)
+                print(f"groq 429 {model}, wait {wait}s"); time.sleep(wait); continue
+            if not r.ok:
+                print("groq http", model, r.status_code, r.text[:150]); break
+            try:
+                txt = r.json()["choices"][0]["message"]["content"]
+                m = re.search(r"\{.*\}", txt, re.S)
+                d = json.loads(m.group(0) if m else txt)
+                h, b = str(d.get("headline", "")).strip(), str(d.get("body", "")).strip()
+                if fa(h):
+                    return {"headline": h, "body": b if fa(b) else "", "urgent": d.get("urgent") in (True, "true", "True"),
+                            "source_fa": str(d.get("source_fa") or source).strip(), "model": model}
+                print("groq bad output", model)
+            except Exception as ex:
+                print("groq parse fail", model, type(ex).__name__)
+            break
+    return None
+
 def clean(s):
     s = re.sub(r"<[^>]+>", " ", s or ""); s = html.unescape(s)
     s = re.sub(r"\s+", " ", s).strip()
@@ -53,12 +96,12 @@ def classify(text, feed, cats):
         return c
     return None
 
-def send(msg):
+def send(msg, preview=False):
     if DRY: print(msg + "\n" + "-" * 40); return True
     r = requests.post(f"https://api.telegram.org/bot{TOKEN}/sendMessage", data={
-        "chat_id": CHANNEL, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": "false"}, timeout=30)
+        "chat_id": CHANNEL, "text": msg, "parse_mode": "HTML", "disable_web_page_preview": "false" if preview else "true"}, timeout=30)
     if r.status_code == 429:
-        time.sleep(r.json().get("parameters", {}).get("retry_after", 5) + 1); return send(msg)
+        time.sleep(r.json().get("parameters", {}).get("retry_after", 5) + 1); return send(msg, preview)
     if not r.ok: print("telegram error:", r.text)
     return r.ok
 
@@ -66,6 +109,9 @@ def main():
     if not DRY and not (TOKEN and CHANNEL): raise SystemExit("Missing TELEGRAM_BOT_TOKEN / TELEGRAM_CHANNEL_ID")
     cfg = yaml.safe_load(open("feeds.yaml", encoding="utf-8"))
     cats = cfg["categories"]
+    sig = cfg.get("channel_signature", ""); preview = bool(cfg.get("link_preview", False))
+    global STATE
+    STATE = os.getenv("STATE_FILE", STATE)
     MAX_POSTS = int(os.getenv("MAX_POSTS", cfg.get("max_posts_per_run", 8)))
     FIRST = int(os.getenv("FIRST_RUN_POSTS", cfg.get("first_run_posts", 4)))
     max_age = float(cfg.get("max_age_hours", 6)) * 3600
@@ -98,18 +144,26 @@ def main():
                 raw_t, _, src = raw_t.rpartition(" - ")
             raw_s = ""  # Google News summary only repeats the title
         if raw_s.lower().startswith(raw_t.lower()[:40]): raw_s = raw_s[len(raw_t):].strip()
-        title = tr(raw_t)
-        if not re.search(r"[\u0600-\u06FF]", title):  # not translated -> don't post English, retry next run
+        rule = cats[cat]; label = rule.get("label", "خبر").replace("_", " ")
+        res = llm_rewrite(raw_t, raw_s, src, label)
+        if res:
+            title, summ, urgent, src_fa = res["headline"], res["body"], res["urgent"], res["source_fa"]
+            print("llm:", res["model"])
+        else:  # fallback: literal translation
+            title = tr(raw_t); urgent = False; src_fa = src
+            summ = tr(raw_s) if len(raw_s) > 25 else ""
+            if summ and not fa(summ): summ = ""
+        if not fa(title):  # never post English; retry next run
             print("skip untranslated:", raw_t[:60])
             if i in seen: seen.remove(i)
             continue
-        summ = tr(raw_s) if len(raw_s) > 25 else ""
-        if summ and not re.search(r"[\u0600-\u06FF]", summ): summ = ""
-        rule = cats[cat]
-        msg = f"{rule.get('emoji','📰')} #{rule.get('label','خبر').replace(' ','_')}\n\n<b>{html.escape(title, quote=False)}</b>\n"
+        head = f"🔴 فوری | {label}" if urgent else f"{rule.get('emoji','📰')} {label}"
+        msg = f"{head}\n\n<b>{html.escape(title, quote=False)}</b>\n"
         if summ: msg += f"\n{html.escape(summ, quote=False)}\n"
-        msg += f"\n🔗 منبع: <a href=\"{html.escape(e.get('link',''), quote=True)}\">{html.escape(src, quote=False)}</a>"
-        if send(msg): seen.append(tk)
+        msg += f"\n🔗 <a href=\"{html.escape(e.get('link',''), quote=True)}\">منبع: {html.escape(src_fa, quote=False)}</a>"
+        if sig: msg += f"\n🆔 {html.escape(sig, quote=False)}"
+        if cfg.get("hashtags", True): msg += f"\n\n#{label.replace(' ', '_')}"
+        if send(msg, preview): seen.append(tk)
         time.sleep(0 if DRY else 3)
     if not DRY:
         os.makedirs("state", exist_ok=True)

@@ -24,6 +24,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHANNEL_ID: ${{ secrets.TELEGRAM_CHANNEL_ID }}
           MYMEMORY_EMAIL: ${{ secrets.MYMEMORY_EMAIL }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
       - name: Save state
         run: |
           git config user.name "news-bot"
